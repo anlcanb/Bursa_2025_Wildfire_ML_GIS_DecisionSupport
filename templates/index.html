@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bursa 2025 Yangın Duyarlılık Karar Destek Sistemi</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { width: 100%; height: 100vh; }
+        .info-panel {
+            position: absolute; top: 15px; left: 60px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 15px;
+            border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); max-width: 340px;
+        }
+        .info-panel h2 { margin: 0 0 8px 0; color: #c0392b; font-size: 18px; text-transform: uppercase; }
+        .scenario-panel {
+            margin-top: 10px; border-top: 1px solid #ddd; padding-top: 10px;
+        }
+        .scenario-panel label { font-size: 12px; font-weight: bold; color: #2c3e50; display: block; margin-bottom: 5px; }
+        .scenario-panel input { width: 100%; margin-bottom: 10px; }
+        .btn-update { width: 100%; background: #c0392b; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-update:hover { background: #a93226; }
+        .legend {
+            position: absolute; bottom: 30px; right: 15px; z-index: 1000;
+            background: white; padding: 12px; border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2); font-size: 13px; line-height: 20px;
+        }
+        .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <div class="info-panel">
+        <h2>Bursa 2025 Web GIS DSS</h2>
+        <p style="font-size: 12px; margin: 0 0 10px 0; color: #7f8c8d;"><b>Gürsu–Kestel Orman Yangını Koridoru</b></p>
+        <p style="font-size: 13px; color: #34495e;">GEE verileri ve Makine Öğrenmesi modelleri ile entegre <b>Mekânsal Karar Destek Sistemi</b>.</p>
+        
+        <div class="scenario-panel">
+            <h4 style="margin:0 0 8px 0; color:#2c3e50; font-size:13px;">🔥 Yangın Senaryosu Simülasyonu</h4>
+            <label for="climate">İklim Faktörü (Sıcaklık ve Rüzgâr Hızı):</label>
+            <input type="range" id="climate" min="0.5" max="1.5" step="0.1" value="1.0">
+            
+            <label for="vegetation">Bitki Örtüsü Kuruluk Derecesi (Kuraklık):</label>
+            <input type="range" id="vegetation" min="0.5" max="1.5" step="0.1" value="1.0">
+            
+            <button class="btn-update" onclick="updateScenario()">Senaryoyu Çalıştır / Riski Hesapla</button>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="legend">
+        <h4 style="margin: 0 0 8px 0; color: #2c3e50;">Yangın Duyarlılık Lejandı</h4>
+        <div><i style="background: #c0392b"></i>Very High Risk</div>
+        <div><i style="background: #e67e22"></i>High Risk</div>
+        <div><i style="background: #f1c40f"></i>Medium Risk</div>
+        <div><i style="background: #27ae60"></i>Low Risk</div>
+        <hr style="margin: 8px 0;">
+        <div><i style="background: none; border: 2px dashed red; height: 10px; width: 16px; border-radius: 0;"></i>Çalışma Alanı Sınırı</div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+const map = L.map('map').setView([40.26, 29.27], 12);
+
+// Alt uydu haritası
+const satelliteBase = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+        attribution: 'Esri World Imagery'
+    }
+).addTo(map);
+
+// Bursa çalışma alanı sınırları
+// [southWest, northEast]
+const imageBounds = [
+    [40.225, 29.225],
+    [40.300, 29.325]
+];
+
+// GEE'den indirilen gerçek pre-fire RGB görüntüsü
+const preFireRGB = L.imageOverlay('/static/maps/pre_fire_rgb.png', imageBounds, {
+    attribution: 'GEE Pre-Fire Sentinel-2 RGB',
+    opacity: 1
+}).addTo(map);
+
+// GEE'den indirilen gerçek post-fire RGB görüntüsü
+const postFireRGB = L.imageOverlay('/static/maps/post_fire_rgb.png', imageBounds, {
+    attribution: 'GEE Post-Fire Sentinel-2 RGB',
+    opacity: 1
+});
+
+// Haritayı çalışma alanına yaklaştır
+map.fitBounds(imageBounds);
+
+        const studyAreaLayer = L.layerGroup().addTo(map);
+        const burnedPointsLayer = L.layerGroup().addTo(map);
+        const unburnedPointsLayer = L.layerGroup().addTo(map);
+        let susceptibilityMapLayer = L.layerGroup().addTo(map);
+
+        // Çalışma Alanı Sınırı
+        fetch('/api/study-area').then(res => res.json()).then(geojsonData => {
+            L.geoJSON(geojsonData, { style: { color: "red", weight: 2, fillOpacity: 0.02, dashArray: "5, 5" } }).addTo(studyAreaLayer);
+        });
+
+        // Ana Harita Yükleme Fonksiyonu
+        function loadMapData(payload = null) {
+            susceptibilityMapLayer.clearLayers();
+            burnedPointsLayer.clearLayers();
+            unburnedPointsLayer.clearLayers();
+
+            const options = payload ? {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            } : { method: 'GET' };
+
+            fetch('/api/susceptibility-geojson', options)
+                .then(res => res.json())
+                .then(data => {
+                    L.geoJSON(data, {
+                        pointToLayer: function (feature, latlng) {
+                            const marker = L.circleMarker(latlng, {
+                                radius: 6, fillColor: feature.properties.color, color: "#fff", weight: 1, fillOpacity: 0.9
+                            });
+
+                            const pointClone = L.circleMarker(latlng, {
+                                radius: 5,
+                                fillColor: feature.properties.label === "Burned Point" ? "#e74c3c" : "#2ecc71",
+                                color: "#000", weight: 1, fillOpacity: 1
+                            }).bindPopup(`<b>Örnek Noktası:</b> ${feature.properties.label}`);
+
+                            if (feature.properties.label === "Burned Point") { pointClone.addTo(burnedPointsLayer); }
+                            else { pointClone.addTo(unburnedPointsLayer); }
+
+                            return marker;
+                        },
+                        onEachFeature: function (feature, layer) {
+                            const props = feature.properties;
+                            // Hocanın Belgesindeki Birebir İstenen Popup Tasarımı (30 Puan)
+                            const popupText = `
+                                <div style="font-size: 13px; line-height: 18px; min-width: 220px;">
+                                    <strong style="color: #2c3e50; font-size:14px;">Mekânsal Karar Destek Analizi</strong><hr style="margin: 5px 0;">
+                                    <b>Risk level:</b> <span style="color:${props.color}; font-weight:bold;">${props.risk_level}</span> (%${(props.probability*100).toFixed(1)})<br>
+                                    <b>NDVI:</b> ${props.ndvi}<br>
+                                    <b>Slope:</b> ${props.slope}<br>
+                                    <b>Distance to road:</b> ${props.distance_to_road}<br>
+                                    <small style="color: gray; display:block; margin-top:5px;">Senaryo Durumu: Dinamik Tetiklendi</small>
+                                </div>
+                            `;
+                            layer.bindPopup(popupText);
+                        }
+                    }).addTo(susceptibilityMapLayer);
+                });
+        }
+
+        // Sürgüler Değişince Arka Yüzü Tetikleyen Fonksiyon (Dinamik Senaryo Aracı)
+        function updateScenario() {
+            const climateFactor = document.getElementById('climate').value;
+            const vegeFactor = document.getElementById('vegetation').value;
+            loadMapData({ climateFactor: climateFactor, vegeFactor: vegeFactor });
+        }
+
+        // İlk açılışta verileri yükle
+        loadMapData();
+
+        const baseMaps = {
+    "Pre-Fire RGB (Temmuz)": preFireRGB,
+    "Post-Fire RGB (Ağustos)": postFireRGB
+};
+        const overlayMaps = {
+            "Çalışma Alanı Sınırı": studyAreaLayer,
+            "Burned Points (500)": burnedPointsLayer,
+            "Unburned Points (500)": unburnedPointsLayer,
+            "Wildfire Susceptibility Map": susceptibilityMapLayer
+        };
+        L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+    </script>
+</body>
+</html>

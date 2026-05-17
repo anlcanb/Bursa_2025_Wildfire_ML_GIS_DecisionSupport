@@ -1,0 +1,9 @@
+{
+  "features": [
+    "preNDVI", "postNDVI", "dNDVI", 
+    "preNBR", "postNBR", "dNBR", 
+    "preNDMI", "postNDMI", "dNDMI", 
+    "elevation", "slope", "aspect", 
+    "landcover", "preNIR", "postNIR"
+  ]
+}
