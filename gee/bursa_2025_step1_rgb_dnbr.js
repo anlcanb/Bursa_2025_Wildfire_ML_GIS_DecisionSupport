@@ -1,15 +1,23 @@
 // Bursa 2025 Wildfire Project - Step 1
 // Pre-fire and post-fire Sentinel-2 RGB visualization + dNBR burn analysis
 
+// IMPORTANT:
+// In the Imports section, you must have two geometry imports:
+// 1) burnedArea   = polygons drawn over burned areas
+// 2) unburnedArea = polygons drawn over unburned forest areas
+//
+// Do NOT use the name "burnedArea" for the dNBR mask.
+// The dNBR mask is named "burnedMask" below.
+
 // Study area focused on the main Bursa 2025 fire corridor:
 // Gürsu TOKİ / İpekyolu - Karahıdır - Ağlaşan
 var studyArea = ee.Geometry.Rectangle([
-  29.235, 40.235,   // west, south
-  29.305, 40.295    // east, north
+  29.225, 40.225,   // west, south
+  29.325, 40.300    // east, north
 ]);
 
 // Alternative smaller test area for Gürsu-Kestel / Ağlaşan-İpekyolu side
-// If the large area is too noisy, comment the first studyArea and use this one.
+// If the current area is too noisy, comment the first studyArea and use this one.
 /*
 var studyArea = ee.Geometry.Rectangle([
   29.18, 40.12,   // west, south
@@ -17,7 +25,7 @@ var studyArea = ee.Geometry.Rectangle([
 ]);
 */
 
-Map.centerObject(studyArea, 11);
+Map.centerObject(studyArea, 12);
 Map.addLayer(studyArea, {color: 'red'}, 'Study Area - Bursa Gürsu/Kestel');
 
 // 2. Date ranges
@@ -121,15 +129,111 @@ Map.addLayer(
 );
 
 // 14. Create initial burned area mask
-// Threshold is experimental. We tried 0.25 first, but it detected very few pixels.
+// Threshold is experimental.
+// We tried 0.25 first, but it detected very few pixels.
 // 0.15 shows more possible burned areas, but it may include false positives.
-var burnedArea = dNBR.gt(0.15).selfMask();
+//
+// IMPORTANT:
+// This is only a visual/analysis mask.
+// It is NOT the same as the manually drawn burnedArea polygon.
+var burnedMask = dNBR.gt(0.15).selfMask();
 
 Map.addLayer(
-  burnedArea,
-  {palette: ['red']},
+  burnedMask,
+  {palette: ['cyan']},
   'Initial Burned Area Mask dNBR > 0.15'
 );
 
 // 15. Print dNBR information
 print('dNBR image:', dNBR);
+
+// 16. Display manually drawn training polygons
+// burnedArea and unburnedArea must come from the Imports section.
+Map.addLayer(
+  burnedArea,
+  {color: 'red'},
+  'Manual Burned Area Polygons'
+);
+
+Map.addLayer(
+  unburnedArea,
+  {color: 'green'},
+  'Manual Unburned Area Polygons'
+);
+
+// 17. Generate random sample points from burned and unburned polygons
+
+// Burned points: label = 1
+var burnedPoints = ee.FeatureCollection.randomPoints({
+  region: burnedArea,
+  points: 500,
+  seed: 42,
+  maxError: 10
+}).map(function(feature) {
+  return feature.set('label', 1);
+});
+
+// Unburned points: label = 0
+var unburnedPoints = ee.FeatureCollection.randomPoints({
+  region: unburnedArea,
+  points: 500,
+  seed: 84,
+  maxError: 10
+}).map(function(feature) {
+  return feature.set('label', 0);
+});
+
+// Merge burned and unburned points
+var samplepoints = burnedPoints.merge(unburnedPoints);
+
+// Display sample points
+// Burned points are cyan so they are visible over red burned polygons.
+Map.addLayer(
+  burnedPoints,
+  {color: 'cyan'},
+  'Burned Points - 500'
+);
+
+Map.addLayer(
+  unburnedPoints,
+  {color: 'blue'},
+  'Unburned Points - 500'
+);
+
+Map.addLayer(
+  samplepoints,
+  {color: 'yellow'},
+  'Samplepoints - 1000'
+);
+
+// Print counts
+print('Burned points count:', burnedPoints.size());
+print('Unburned points count:', unburnedPoints.size());
+print('Total samplepoints count:', samplepoints.size());
+
+// 18. Export samplepoints as shapefile to Google Drive
+Export.table.toDrive({
+  collection: samplepoints,
+  description: 'Bursa_2025_samplepoints',
+  folder: 'Bursa_2025_Wildfire_Project',
+  fileNamePrefix: 'samplepoints',
+  fileFormat: 'SHP'
+});
+
+// 19. Export burned points separately as shapefile
+Export.table.toDrive({
+  collection: burnedPoints,
+  description: 'Bursa_2025_burned_points',
+  folder: 'Bursa_2025_Wildfire_Project',
+  fileNamePrefix: 'burned_points',
+  fileFormat: 'SHP'
+});
+
+// 20. Export unburned points separately as shapefile
+Export.table.toDrive({
+  collection: unburnedPoints,
+  description: 'Bursa_2025_unburned_points',
+  folder: 'Bursa_2025_Wildfire_Project',
+  fileNamePrefix: 'unburned_points',
+  fileFormat: 'SHP'
+});
