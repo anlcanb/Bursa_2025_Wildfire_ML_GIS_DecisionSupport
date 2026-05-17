@@ -237,3 +237,68 @@ Export.table.toDrive({
   fileNamePrefix: 'unburned_points',
   fileFormat: 'SHP'
 });
+
+// 21. Feature extraction for machine learning dataset
+// This section creates 15 GIS/remote sensing features and samples them at 1000 points.
+
+// NDVI
+var preNDVI = preFireImage.normalizedDifference(['B8', 'B4']).rename('preNDVI');
+var postNDVI = postFireImage.normalizedDifference(['B8', 'B4']).rename('postNDVI');
+var dNDVI = preNDVI.subtract(postNDVI).rename('dNDVI');
+
+// NDMI
+var preNDMI = preFireImage.normalizedDifference(['B8', 'B11']).rename('preNDMI');
+var postNDMI = postFireImage.normalizedDifference(['B8', 'B11']).rename('postNDMI');
+var dNDMI = preNDMI.subtract(postNDMI).rename('dNDMI');
+
+// Terrain features
+var dem = ee.Image('USGS/SRTMGL1_003').clip(studyArea);
+var elevation = dem.rename('elevation');
+var slope = ee.Terrain.slope(dem).rename('slope');
+var aspect = ee.Terrain.aspect(dem).rename('aspect');
+
+// Land cover
+var landcover = ee.Image('ESA/WorldCover/v200/2021')
+  .select('Map')
+  .clip(studyArea)
+  .rename('landcover');
+
+// Feature stack: 15 features
+var featureStack = ee.Image.cat([
+  preNDVI,
+  postNDVI,
+  dNDVI,
+  preNBR,
+  postNBR,
+  dNBR,
+  preNDMI,
+  postNDMI,
+  dNDMI,
+  elevation,
+  slope,
+  aspect,
+  landcover,
+  preFireImage.select('B8').rename('preNIR'),
+  postFireImage.select('B8').rename('postNIR')
+]);
+
+// Sample feature values at samplepoints
+var mlDataset = featureStack.sampleRegions({
+  collection: samplepoints,
+  properties: ['label'],
+  scale: 10,
+  geometries: true
+});
+
+// Print dataset preview
+print('ML Dataset:', mlDataset);
+print('ML Dataset size:', mlDataset.size());
+
+// Export full ML dataset as CSV
+Export.table.toDrive({
+  collection: mlDataset,
+  description: 'Bursa_2025_ML_dataset',
+  folder: 'Bursa_2025_Wildfire_Project',
+  fileNamePrefix: 'dataset',
+  fileFormat: 'CSV'
+});
